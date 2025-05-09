@@ -1,0 +1,210 @@
+// main_nodeB.cpp
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+
+#include <iostream>
+#include <string>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <cstdlib>
+#include <ctime>
+#include <algorithm>
+#include "sqlite3.h"
+#include "Node.h"
+#include "WalletDB.h"
+#include "KeyUtils.h"
+#include "Vote.h"
+#include "Transaction.h"
+#include "nlohmann/json.hpp"
+
+#pragma comment(lib, "Ws2_32.lib")
+using json = nlohmann::json;
+
+struct WalletData {
+    std::string voterId;
+    std::string publicKey;
+    std::string privateKey;
+};
+
+std::vector<WalletData> loadAllWallets(const std::string& dbPath = "wallets.db") {
+    std::vector<WalletData> wallets;
+    sqlite3* db;
+    int rc = sqlite3_open(dbPath.c_str(), &db);
+    if (rc) {
+        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        return wallets;
+    }
+    const char* sql = "SELECT voterId, publicKey, privateKey FROM wallets;";
+    sqlite3_stmt* stmt = nullptr;
+    rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+        sqlite3_close(db);
+        return wallets;
+    }
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        WalletData wd;
+        wd.voterId = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        wd.publicKey = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        wd.privateKey = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        wallets.push_back(wd);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return wallets;
+}
+
+// Filter wallets for Node B: voters 51 to 100.
+std::vector<WalletData> filterWalletsForNodeB(const std::vector<WalletData>& allWallets) {
+    std::vector<WalletData> result;
+    for (const auto& wd : allWallets) {
+        if (wd.voterId.substr(0, 5) == "voter") {
+            try {
+                int num = std::stoi(wd.voterId.substr(5));
+                if (num >= 51 && num <= 100)
+                    result.push_back(wd);
+            }
+            catch (...) {
+                // Skip invalid formats.
+            }
+        }
+    }
+    return result;
+}
+
+Transaction voteToTransaction(const Vote& vote) {
+    return Transaction(vote);
+}
+
+void autoGenerateTransactions(Node& node, const std::vector<WalletData>& wallets, int limit) {
+    int count = 0;
+    const char* candidates[3] = { "CandidateA", "CandidateB", "CandidateC" };
+    while (count < limit) {
+        int sleepTime = 3 + rand() % 4;
+        std::this_thread::sleep_for(std::chrono::seconds(sleepTime));
+        int index = rand() % wallets.size();
+        WalletData wd = wallets[index];
+        std::string candidate = candidates[rand() % 3];
+        try {
+            int nonce = rand();
+            Vote vote(wd.voterId, candidate, nonce);
+            EVP_PKEY* privKey = loadPrivateKey(wd.privateKey);
+            vote.sign(privKey);
+            EVP_PKEY_free(privKey);
+            vote.publicKey = wd.publicKey;
+            Transaction tx = voteToTransaction(vote);
+            json message;
+            message["type"] = "TRANSACTION";
+            message["data"] = tx.toJson();
+            std::cout << "Auto-generated transaction from " << wd.voterId
+                << " for " << candidate << std::endl;
+            node.addLocalTransaction(message);
+            node.broadcastMessage(message);
+            count++;
+            // Trigger mining if pending transactions count reaches 10.
+            if (node.getPendingTransactionCount() >= 10) {
+                std::cout << "Pending transaction threshold reached. Triggering mining..." << std::endl;
+                node.minePendingTransactions();
+            }
+        }
+        catch (const std::exception& ex) {
+            std::cerr << "Error generating transaction: " << ex.what() << std::endl;
+        }
+    }
+    std::cout << "Auto-generation thread reached limit of " << limit << " transactions." << std::endl;
+}
+
+int main() {
+    srand(static_cast<unsigned int>(time(nullptr)));
+    try {
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            std::cerr << "WSAStartup failed." << std::endl;
+            return 1;
+        }
+        SetConsoleCP(65001);
+        SetConsoleOutputCP(65001);
+        std::cout << "Console is set to UTF-8." << std::endl;
+        std::vector<WalletData> allWallets = loadAllWallets("wallets.db");
+        std::vector<WalletData> nodeBWallets = filterWalletsForNodeB(allWallets);
+        if (nodeBWallets.empty()) {
+            std::cerr << "No wallets found for Node B." << std::endl;
+            return 1;
+        }
+        std::cout << "Node B loaded " << nodeBWallets.size() << " wallets." << std::endl;
+        Node node(12346);
+        // Connect to Node A at 127.0.0.1:12345.
+        node.connectToPeer("127.0.0.1", "12345");
+        std::thread nodeThread([&node]() { node.run(); });
+        std::thread autoGenThread(autoGenerateTransactions, std::ref(node), nodeBWallets, 25);
+        autoGenThread.join();
+        // Do NOT automatically trigger final mining; wait for new transactions.
+        std::cout << "Auto-generation completed. Waiting for new transactions..." << std::endl;
+        // Interactive command loop.
+        std::cout << "Enter command:" << std::endl;
+        std::cout << "  b - broadcast manual transaction (vote)" << std::endl;
+        std::cout << "  m - mine pending transactions" << std::endl;
+        std::cout << "  t - print vote tally" << std::endl;
+        std::cout << "  q - quit" << std::endl;
+        while (true) {
+            std::string command;
+            std::getline(std::cin, command);
+            if (command == "b") {
+                const char* candidates[3] = { "CandidateA", "CandidateB", "CandidateC" };
+                std::string candidate = candidates[rand() % 3];
+                try {
+                    int nonce = rand();
+                    int index = rand() % nodeBWallets.size();
+                    WalletData wd = nodeBWallets[index];
+                    Vote vote(wd.voterId, candidate, nonce);
+                    EVP_PKEY* privKey = loadPrivateKey(wd.privateKey);
+                    vote.sign(privKey);
+                    EVP_PKEY_free(privKey);
+                    vote.publicKey = wd.publicKey;
+                    EVP_PKEY* pubKey = loadPublicKey(wd.publicKey);
+                    if (!vote.verify(pubKey)) {
+                        std::cerr << "Manual vote signature verification failed." << std::endl;
+                        EVP_PKEY_free(pubKey);
+                        continue;
+                    }
+                    EVP_PKEY_free(pubKey);
+                    Transaction tx = voteToTransaction(vote);
+                    json message;
+                    message["type"] = "TRANSACTION";
+                    message["data"] = tx.toJson();
+                    std::cout << "Broadcasting manual transaction for " << candidate
+                        << " from " << wd.voterId << std::endl;
+                    node.addLocalTransaction(message);
+                    node.broadcastMessage(message);
+                }
+                catch (const std::exception& ex) {
+                    std::cerr << "Error creating manual vote: " << ex.what() << std::endl;
+                }
+            }
+            else if (command == "m") {
+                std::cout << "Mining pending transactions..." << std::endl;
+                node.minePendingTransactions();
+            }
+            else if (command == "t") {
+                node.printVoteTally();
+            }
+            else if (command == "q") {
+                std::cout << "Quitting..." << std::endl;
+                break;
+            }
+            else {
+                std::cout << "Unknown command. Use 'b', 'm', 't', or 'q'." << std::endl;
+            }
+        }
+        nodeThread.join();
+        WSACleanup();
+    }
+    catch (const std::exception& ex) {
+        std::cerr << "Exception: " << ex.what() << std::endl;
+        return 1;
+    }
+    return 0;
+}

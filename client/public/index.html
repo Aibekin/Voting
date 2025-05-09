@@ -1,0 +1,126 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voting System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+        }
+
+        .success {
+            background: #dff0d8;
+            color: #3c763d;
+        }
+
+        .error {
+            background: #f2dede;
+            color: #a94442;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Online Voting System</h1>
+
+    <form id="voteForm">
+        <div class="form-group">
+            <label>Voter ID:</label>
+            <input type="text" name="voterId" required value="voter35">
+        </div>
+
+        <div class="form-group">
+            <label>Candidate ID:</label>
+            <input type="text" name="candidateId" required placeholder="CandidateA">
+        </div>
+
+        <div class="form-group">
+            <label>Private Key (PEM):</label>
+            <textarea name="privateKey" rows="4" required></textarea>
+        </div>
+
+        <div class="form-group">
+            <label>Public Key (PEM):</label>
+            <textarea name="publicKey" rows="4" required></textarea>
+        </div>
+
+        <button type="submit">Submit Vote</button>
+    </form>
+
+    <div id="result" class="result"></div>
+
+    <script>
+        document.getElementById('voteForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData(e.target);
+            const data = {
+                voterId: formData.get('voterId'),
+                candidateId: formData.get('candidateId'),
+                privateKey: formData.get('privateKey'),
+                publicKey: formData.get('publicKey')
+            };
+
+            try {
+                const response = await fetch('/vote', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                const resultDiv = document.getElementById('result');
+                resultDiv.className = `result ${response.ok ? 'success' : 'error'}`;
+                resultDiv.innerHTML = response.ok
+                    ? `✅ Success: ${result.message}<br>
+                       Server Response: ${result.serverResponse}<br>`
+                    : `❌ Error: ${result.message}`;
+
+            } catch (error) {
+                document.getElementById('result').innerHTML =
+                    `❌ Network Error: ${error.message}`;
+            }
+        });
+    </script>
+</body>
+
+</html>
