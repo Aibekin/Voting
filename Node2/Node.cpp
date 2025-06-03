@@ -233,7 +233,12 @@ void Node::handleMessage(const nlohmann::json& message, SOCKET clientSocket) {
     }
 
     std::string type = message["type"];
-    if (type == "TRANSACTION") {
+    if (type == "GET_VOTE_TALLY") {
+        std::string responseStr = getVoteTallyJson().dump();
+        send(clientSocket, responseStr.c_str(), responseStr.size(), 0);
+        return;
+    }
+    else if (type == "TRANSACTION") {
         try {
             Vote vote;
             vote.fromJson(message["data"]);
@@ -303,6 +308,16 @@ void Node::printVoteTally() {
     for (const auto& pair : tally) {
         std::cout << "Candidate: " << pair.first << " - Votes: " << pair.second << std::endl;
     }
+}
+
+nlohmann::json Node::getVoteTallyJson() const
+{
+    auto tally = blockchain_.tallyVotes();
+    nlohmann::json result;
+    for (const auto& pair : tally) {
+        result[pair.first] = pair.second;
+    }
+    return result;
 }
 
 void Node::addLocalTransaction(const nlohmann::json& message) {

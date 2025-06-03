@@ -41,6 +41,7 @@ public:
     void addLocalTransaction(const json& message);
     int getPendingTransactionCount() const;
     void printBlockchainJson() const; // Дополнительная функция для вывода блокчейна
+    nlohmann::json getVoteTallyJson() const;
 
 private:
     void doAccept();

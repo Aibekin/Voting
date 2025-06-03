@@ -84,6 +84,8 @@
     </form>
 
     <div id="result" class="result"></div>
+    <button id="getTallyBtn">Получить результаты</button>
+    <div id="tallyResults"></div>
 
     <script>
         document.getElementById('voteForm').addEventListener('submit', async (e) => {
@@ -118,6 +120,24 @@
             } catch (error) {
                 document.getElementById('result').innerHTML =
                     `❌ Network Error: ${error.message}`;
+            }
+        });
+        document.getElementById('getTallyBtn').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/tally');
+                const data = await response.json();
+
+                if (data.success) {
+                    let resultsHtml = '<h3>Результаты голосования:</h3>';
+                    for (const [candidate, votes] of Object.entries(data.tally)) {
+                        resultsHtml += `<p>${candidate}: ${votes} голосов</p>`;
+                    }
+                    document.getElementById('tallyResults').innerHTML = resultsHtml;
+                } else {
+                    alert('Ошибка: ' + data.message);
+                }
+            } catch (error) {
+                alert('Ошибка при запросе результатов: ' + error.message);
             }
         });
     </script>

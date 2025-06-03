@@ -73,6 +73,63 @@ app.post('/vote', async (req, res) => {
     }
 });
 
+// Добавляем новый GET-маршрут
+app.get('/tally', async (req, res) => {
+    try {
+        // Отправляем запрос на TCP-сервер
+        const tally = await requestTallyFromServer();
+        res.json({
+            success: true,
+            tally: tally
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+function requestTallyFromServer() {
+    return new Promise((resolve, reject) => {
+        const client = new net.Socket();
+        const message = {
+            type: "GET_VOTE_TALLY",
+            data: "just wanna know how many people voted for CandidateC"
+        };
+
+        client.connect(SERVER_PORT, SERVER_HOST, () => {
+            client.write(JSON.stringify(message));
+        });
+
+        let responseData = '';
+
+        client.on('data', data => {
+            responseData += data.toString();
+            // Закрываем соединение после получения данных
+            client.end();
+        });
+
+        client.on('end', () => {
+            try {
+                const tally = JSON.parse(responseData);
+                resolve(tally);
+            } catch (e) {
+                reject(new Error('Ошибка парсинга ответа сервера'));
+            }
+        });
+
+        client.on('error', err => {
+            reject(err);
+        });
+
+        client.setTimeout(5000, () => {
+            client.destroy();
+            reject(new Error('Таймаут подключения'));
+        });
+    });
+}
+
 function sendToServer(vote) {
     return new Promise((resolve, reject) => {
         const client = new net.Socket();
